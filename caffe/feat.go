@@ -4,12 +4,12 @@ import (
 	"image"
 	"path"
 
-	"github.com/jvlmdr/go-cv/feat"
+	"github.com/jvlmdr/go-cv/featset"
 	"github.com/jvlmdr/go-cv/rimg64"
 )
 
 func init() {
-	feat.RegisterImage("caffe", func() feat.Image { return new(Feature) })
+	featset.RegisterImage("caffe", func() featset.Image { return new(Feature) })
 }
 
 var (
@@ -40,6 +40,12 @@ func (phi *Feature) Apply(im image.Image) (*rimg64.Multi, error) {
 	}
 	return feats[0], nil
 }
+
+func (phi *Feature) Marshaler() *featset.ImageMarshaler {
+	return &featset.ImageMarshaler{"caffe", phi}
+}
+
+func (phi *Feature) Transform() featset.Image { return phi }
 
 func (phi *Feature) Map(ims []image.Image) ([]*rimg64.Multi, error) {
 	return Extract(ExtractScript, ims, phi.Layer, phi.Model, weightsFile(phi.WeightsName), MeanFile)
