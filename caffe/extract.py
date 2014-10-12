@@ -55,7 +55,7 @@ def layer_size(net, name, size):
     if len(bottoms) != 1:
       raise RuntimeError("number of input layers not one: " + len(bottoms))
     prev = helper(bottoms[0])
-    out = tuple([ceildiv(n-field+1, stride) for n in prev])
+    out = tuple([max(0, ceildiv(n-field+1, stride)) for n in prev])
     print("{}: {} -> {}".format(name, prev, out))
     return out
   return helper(name)
