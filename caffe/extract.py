@@ -6,6 +6,7 @@ from google.protobuf import text_format
 from caffe.proto import caffe_pb2
 import tempfile
 import os
+import image_pb2
 
 def load_mean(fname):
   return np.mean(np.load(fname), (1,2))
@@ -15,14 +16,30 @@ def read_csv(fname):
     reader = csv.reader(f)
     return [x for x in reader]
 
+def flat_strides(arr):
+  "Gets the strides (in elements not bytes) of an array. May be a sub-array."
+  strides = {}
+  prod = 1
+  for i in np.argsort(arr.strides):
+    strides[i] = prod
+    prod *= arr.shape[i]
+  return [strides[x] for x in range(arr.ndim)]
+
 def save_image(fname, arr):
+  strides = flat_strides(arr)
+  print "shape:", arr.shape
+  print "strides:", strides
+  print "size:", arr.size
+  num_channels, height, width = arr.shape
+  channel_stride, y_stride, x_stride = strides
+  msg = image_pb2.Multi(width=width, height=height, num_channels=num_channels,
+      x_stride=x_stride, y_stride=y_stride, channel_stride=channel_stride)
+  print "copy"
+  msg.elem.extend([x for x in arr.astype(float).flat])
+  print "save"
   with open(fname, "w") as f:
-    writer = csv.writer(f)
-    c, m, n = arr.shape
-    for k in range(c):
-      for i in range(m):
-        for j in range(n):
-          writer.writerow([j, i, k, repr(arr[k,i,j])])
+    f.write(msg.SerializeToString())
+  print "done: save"
 
 def ceildiv(a, b):
   return (a + b - 1) / b
