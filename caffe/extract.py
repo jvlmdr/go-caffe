@@ -26,16 +26,20 @@ def flat_strides(arr):
   return [strides[x] for x in range(arr.ndim)]
 
 def save_image(fname, arr):
-  strides = flat_strides(arr)
-  print "shape:", arr.shape
-  print "strides:", strides
-  print "size:", arr.size
-  num_channels, height, width = arr.shape
-  channel_stride, y_stride, x_stride = strides
-  msg = image_pb2.Multi(width=width, height=height, num_channels=num_channels,
-      x_stride=x_stride, y_stride=y_stride, channel_stride=channel_stride)
-  print "copy"
-  msg.elem.extend([x for x in arr.astype(float).flat])
+  if arr.size == 0:
+    msg = image_pb2.Multi(width=0, height=0, num_channels=0,
+        x_stride=0, y_stride=0, channel_stride=0)
+  else:
+    strides = flat_strides(arr)
+    print "shape:", arr.shape
+    print "strides:", strides
+    print "size:", arr.size
+    num_channels, height, width = arr.shape
+    channel_stride, y_stride, x_stride = strides
+    msg = image_pb2.Multi(width=width, height=height, num_channels=num_channels,
+        x_stride=x_stride, y_stride=y_stride, channel_stride=channel_stride)
+    print "copy"
+    msg.elem.extend([x for x in arr.astype(float).flat])
   print "save"
   with open(fname, "w") as f:
     f.write(msg.SerializeToString())
@@ -155,26 +159,30 @@ def main():
       channel_swap=(2,1,0), raw_scale=255.0)
 
   for in_file, out_file in files:
-    # Get image size.
+    # Retrieve image size.
     im = caffe.io.load_image(in_file)
     imsz = (im.shape[0], im.shape[1])
-    # Modify model to have image size.
-    model.input_dim[0] = 1
-    model.input_dim[2:4] = imsz
-    # Instantiate network.
-    net = new_net(model)
-    copy_weights(net, pretrained)
-    net.set_phase_test()
-    net.set_channel_swap("data", (2,1,0))
-    net.set_raw_scale("data", 255.0)
-    # Evaluate network.
-    data = np.asarray([preprocess(net, "data", im, mean)])
-    net.forward(data=data)
-    out = net.blobs[args.layer].data
-    # Take valid sub-image.
+    # Calculate feature image size.
     ftsz = layer_size(model, args.layer, imsz)
-    print("crop {} from {}".format(ftsz, out.shape[2:4]))
-    out = out[0, :, :ftsz[0], :ftsz[1]]
+    if any([x <= 0 for x in ftsz]):
+      out = np.ndarray((1, 0, 0))
+    else:
+      # Modify model to have image size.
+      model.input_dim[0] = 1
+      model.input_dim[2:4] = imsz
+      # Instantiate network.
+      net = new_net(model)
+      copy_weights(net, pretrained)
+      net.set_phase_test()
+      net.set_channel_swap("data", (2,1,0))
+      net.set_raw_scale("data", 255.0)
+      # Evaluate network.
+      data = np.asarray([preprocess(net, "data", im, mean)])
+      net.forward(data=data)
+      out = net.blobs[args.layer].data
+      # Take valid sub-image.
+      print("crop {} from {}".format(ftsz, out.shape[2:4]))
+      out = out[0, :, :ftsz[0], :ftsz[1]]
     save_image(out_file, out)
 
 if __name__ == "__main__":
