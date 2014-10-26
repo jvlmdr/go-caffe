@@ -102,15 +102,18 @@ def preprocess(net, input_name, im, mean):
     input_scale = net.input_scale.get(input_name)
     raw_scale = net.raw_scale.get(input_name)
     channel_order = net.channel_swap.get(input_name)
-    out -= np.tile(mean, (out.shape[0], out.shape[1], 1))
-    # in_size = net.blobs[input_name].data.shape[2:]
-    # if out.shape[:2] != in_size:
-    #     out = caffe.io.resize_image(out, in_size)
+    # Change from RGB to BGR before subtracting mean.
     if channel_order is not None:
         out = out[:, :, channel_order]
+    # Make image channels x height x width.
     out = out.transpose((2, 0, 1))
+    # Replicate mean pixel in all locations.
+    mean = np.reshape(mean, (3, 1, 1))
+    mean = np.tile(mean, (1, out.shape[1], out.shape[2]))
+    # Apply raw_scale, then subtract mean, then apply input_scale.
     if raw_scale is not None:
         out *= raw_scale
+    out -= mean
     if input_scale is not None:
         out *= input_scale
     return out
