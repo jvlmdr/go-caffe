@@ -7,6 +7,7 @@ import (
 	"github.com/jvlmdr/go-cv/convfeat"
 	"github.com/jvlmdr/go-cv/featset"
 	"github.com/jvlmdr/go-cv/rimg64"
+	"github.com/jvlmdr/go-cv/slide"
 )
 
 func FromProto(net *NetParameter, output string, mean []float64) (featset.Image, error) {
@@ -235,7 +236,7 @@ func blobDims(blob *BlobProto) BlobDims {
 // If the layer as a whole maps m channels to n channels,
 // then the blob will be have m/groups inputs and n outputs.
 // The first n/groups filters are applied to the first m/groups channels and so on.
-func filterBanksFromBlob(blob *BlobProto, dims BlobDims, groups int) ([]*convfeat.FilterBankMulti, error) {
+func filterBanksFromBlob(blob *BlobProto, dims BlobDims, groups int) ([]*slide.MultiBank, error) {
 	if err := errIfDimsNotEq(dims, blobDims(blob)); err != nil {
 		return nil, err
 	}
@@ -244,7 +245,7 @@ func filterBanksFromBlob(blob *BlobProto, dims BlobDims, groups int) ([]*convfea
 	}
 
 	outPerGroup := dims.Out / groups
-	banks := make([]*convfeat.FilterBankMulti, groups)
+	banks := make([]*slide.MultiBank, groups)
 	var ind int
 	for j := range banks {
 		filts := make([]*rimg64.Multi, outPerGroup)
@@ -264,13 +265,12 @@ func filterBanksFromBlob(blob *BlobProto, dims BlobDims, groups int) ([]*convfea
 				}
 			}
 		}
-		field := image.Pt(dims.Width, dims.Height)
-		banks[j] = &convfeat.FilterBankMulti{field, dims.In, filts}
+		banks[j] = &slide.MultiBank{dims.Width, dims.Height, dims.In, filts}
 	}
 	return banks, nil
 }
 
-func filterBankFromBlob(blob *BlobProto, dims BlobDims) (*convfeat.FilterBankMulti, error) {
+func filterBankFromBlob(blob *BlobProto, dims BlobDims) (*slide.MultiBank, error) {
 	if err := errIfDimsNotEq(dims, blobDims(blob)); err != nil {
 		return nil, err
 	}
@@ -296,8 +296,7 @@ func filterBankFromBlob(blob *BlobProto, dims BlobDims) (*convfeat.FilterBankMul
 			}
 		}
 	}
-	field := image.Pt(dims.Width, dims.Height)
-	bank := &convfeat.FilterBankMulti{field, dims.In, filts}
+	bank := &slide.MultiBank{dims.Width, dims.Height, dims.In, filts}
 	return bank, nil
 }
 

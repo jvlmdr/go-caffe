@@ -12,6 +12,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"code.google.com/p/goprotobuf/proto"
 	"github.com/jvlmdr/go-caffe/caffe"
@@ -21,15 +22,20 @@ import (
 
 func init() {
 	flag.Usage = func() {
-		fmt.Fprintln(os.Stderr, os.Args[0], "model.json weights mean.npy mean-rgb layers image.(jpeg|png)")
+		fmt.Fprintln(os.Stderr, os.Args[0], "extract.py arch.json weights mean.npy mean-rgb layer image.(jpeg|png)")
 		flag.PrintDefaults()
 	}
 }
 
 func main() {
-	var epsRel, epsAbs float64
+	var (
+		epsRel float64
+		epsAbs float64
+		trials int
+	)
 	flag.Float64Var(&epsRel, "eps-rel", 1e-6, "Relative error threshold")
 	flag.Float64Var(&epsAbs, "eps-abs", 1e-6, "Absolute error threshold")
+	flag.IntVar(&trials, "trials", 16, "Number of trials for benchmark")
 
 	flag.Parse()
 	if flag.NArg() != 7 {
@@ -37,65 +43,107 @@ func main() {
 		os.Exit(1)
 	}
 	var (
-		extractScript = flag.Arg(0)
-		modelFile     = flag.Arg(1)
-		weightsFile   = flag.Arg(2)
-		meanFile      = flag.Arg(3)
-		meanStr       = flag.Arg(4)
-		layersStr     = flag.Arg(5)
-		imageFile     = flag.Arg(6)
+		script      = flag.Arg(0)
+		archFile    = flag.Arg(1)
+		weightsFile = flag.Arg(2)
+		meanFile    = flag.Arg(3)
+		meanStr     = flag.Arg(4)
+		layer       = flag.Arg(5)
+		imageFile   = flag.Arg(6)
 	)
 
-	model := new(caffe.NetParameter)
-	if err := fileutil.LoadJSON(modelFile, model); err != nil {
-		log.Fatalln("load model:", err)
+	arch := new(caffe.NetParameter)
+	if err := fileutil.LoadJSON(archFile, arch); err != nil {
+		log.Fatalln("load architecture:", err)
 	}
 	mean, err := meanFromStr(meanStr)
 	if err != nil {
 		log.Fatalln("parse mean from args:", err)
 	}
-	layers := strings.Split(layersStr, ",")
 	weights, err := loadWeights(weightsFile)
 	if err != nil {
 		log.Fatalln("load weights:", err)
 	}
 	// Load model again. Easier than deep copy.
 	net := new(caffe.NetParameter)
-	if err := fileutil.LoadJSON(modelFile, net); err != nil {
-		log.Fatalln("load model:", err)
+	if err := fileutil.LoadJSON(archFile, net); err != nil {
+		log.Fatalln("load architecture:", err)
 	}
 	copyBlobs(net, weights)
-	x, err := loadImage(imageFile)
+	im, err := loadImage(imageFile)
 	if err != nil {
 		log.Fatalln("load image:", err)
 	}
+	err = test(im, net, layer, mean, script, arch, weightsFile, meanFile, epsRel, epsAbs)
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = bench(im, net, layer, mean, script, arch, weightsFile, meanFile, trials)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
 
-	var pass int
-	for _, layer := range layers {
-		log.Println("test layer:", layer)
-		phi, err := caffe.FromProto(net, layer, mean)
-		if err != nil {
-			log.Fatalln("convert to feature transform:", err)
-		}
-		layerModel := caffe.SubsetForOutput(model, layer)
+// net is a populated network, which will be converted to a native feature transform.
+// arch is the empty network whose architecture will be used to load weightsFile.
+func test(im image.Image, net *caffe.NetParameter, layer string, mean []float64, script string, arch *caffe.NetParameter, weightsFile, meanFile string, epsRel, epsAbs float64) error {
+	log.Println("test layer:", layer)
+	phi, err := caffe.FromProto(net, layer, mean)
+	if err != nil {
+		log.Fatalln("convert to feature transform:", err)
+	}
+	// Take the architecture subset necessary to compute this layer.
+	subset := caffe.SubsetForOutput(arch, layer)
+	log.Print("compute features using caffe")
+	ys, err := caffe.Extract(script, []image.Image{im}, layer, subset, weightsFile, meanFile)
+	if err != nil {
+		return fmt.Errorf("compute features using caffe: %v", err)
+	}
+	want := ys[0]
+	log.Print("compute features in go")
+	got, err := phi.Apply(im)
+	if err != nil {
+		log.Fatalln("compute features in go:", err)
+	}
+	log.Print("compare outputs")
+	if !eq(want, got, epsRel, epsAbs) {
+		fmt.Println("FAIL")
+	} else {
+		fmt.Println("PASS")
+	}
+	return nil
+}
+
+// net is a populated network, which will be converted to a native feature transform.
+// arch is the empty network whose architecture will be used to load weightsFile.
+func bench(im image.Image, net *caffe.NetParameter, layer string, mean []float64, script string, arch *caffe.NetParameter, weightsFile, meanFile string, trials int) error {
+	log.Println("test layer:", layer)
+	phi, err := caffe.FromProto(net, layer, mean)
+	if err != nil {
+		log.Fatalln("convert to feature transform:", err)
+	}
+	var durPython, durNative float64
+	for i := 0; i < trials; i++ {
+		// Take the architecture subset necessary to compute this layer.
+		subset := caffe.SubsetForOutput(arch, layer)
 		log.Print("compute features using caffe")
-		ys, err := caffe.Extract(extractScript, []image.Image{x}, layer, layerModel, weightsFile, meanFile)
+		start := time.Now()
+		_, err = caffe.Extract(script, []image.Image{im}, layer, subset, weightsFile, meanFile)
+		durPython += time.Since(start).Seconds()
 		if err != nil {
-			log.Fatalln("compute features using caffe:", err)
+			return fmt.Errorf("compute features using caffe: %v", err)
 		}
-		want := ys[0]
 		log.Print("compute features in go")
-		got, err := phi.Apply(x)
+		start = time.Now()
+		_, err = phi.Apply(im)
 		if err != nil {
 			log.Fatalln("compute features in go:", err)
 		}
-		log.Print("compare outputs")
-		if !eq(want, got, epsRel, epsAbs) {
-			continue
-		}
-		pass++
+		durNative += time.Since(start).Seconds()
 	}
-	fmt.Printf("%d / %d tests pass\n", pass, len(layers))
+	fmt.Printf("Python: %.3g sec\n", durPython/float64(trials))
+	fmt.Printf("native: %.3g sec\n", durNative/float64(trials))
+	return nil
 }
 
 func loadImage(fname string) (image.Image, error) {
